@@ -2,7 +2,7 @@
 This repo is the official implementation for DMatch: Distinguish Confusing Classes with Unlabeled Data for Semi-Supervised Learning
 
 
-## Architecture of MG-GCL
+## Architecture of DMatch     
 ![image](./images/Architecture.png)
 
 # Prerequisites
@@ -25,16 +25,9 @@ This repo is the official implementation for DMatch: Distinguish Confusing Class
 
 #### There are 3 datasets to download:
 
-- NTU RGB+D 60 Skeleton
-- NTU RGB+D 120 Skeleton
+- CIFAR-10/100   
+- SVHN    
 
-#### NTU RGB+D 60 and 120
-
-1. Request dataset here: https://rose1.ntu.edu.sg/dataset/actionRecognition
-2. Download the skeleton-only datasets:
-   1. `nturgbd_skeletons_s001_to_s017.zip` (NTU RGB+D 60)
-   2. `nturgbd_skeletons_s018_to_s032.zip` (NTU RGB+D 120)
-   3. Extract above files to `./data/nturgbd_raw`
 
 ### Data Processing
 
@@ -44,13 +37,10 @@ Put downloaded data into the following directory structure:
 
 ```
 - data/
-  - ntu/
-  - ntu120/
-  - nturgbd_raw/
-    - nturgb+d_skeletons/     # from `nturgbd_skeletons_s001_to_s017.zip`
-      ...
-    - nturgb+d_skeletons120/  # from `nturgbd_skeletons_s018_to_s032.zip`
-      ...
+  - cifar-10-batches-py/    # from 'cifar-10-python.tar.gz'
+  - cifar-100-python/       # from 'cifar-100-python.tar.gz'
+    ...
+    ...
 ```
 
 #### Generating Data
