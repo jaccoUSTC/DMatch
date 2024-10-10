@@ -16,7 +16,7 @@ This repo is the official implementation for DMatch: Distinguish Confusing Class
 - pillow
 
 - We provide the dependency file of our experimental environment, you can install all dependencies by creating a new anaconda virtual environment and running `pip install -r requirements.txt `
-- Run `pip install -e torchlight` 
+
 
 
 # Data Preparation
@@ -43,7 +43,7 @@ Put downloaded data into the following directory structure:
     ...
 ```
 
-#### Generating Data
+<!-- #### Generating Data
 
 - Generate NTU RGB+D 60 or NTU RGB+D 120 dataset:
 
@@ -55,51 +55,28 @@ Put downloaded data into the following directory structure:
  python get_raw_denoised_data.py
  # Transform the skeleton to the center of the first frame
  python seq_transformation.py
-```
+``` -->
 
 # Training & Testing
 
 ### Training
 
-- Change the config file depending on what you want, and you can refer to the [script folder](https://github.com/OliverHxh/SkeletonGCL/tree/main/script) for the more examples. Notably, please just use one GPU for training because we find that using mutiple GPUs would affect the performances.
+- Change the config file depending on what you want. Notably, please just use one GPU for training because we find that using mutiple GPUs would affect the performances.
 
 ```
-# Example: training SkeletonGCL with CTRGCN on NTU RGB+D 120 cross-subject with joint modality on GPU 0
-python main.py --config config/nturgbd120-cross-subject/ctr.yaml --work-dir work_dir/ntu120/csub/ctrgcn_joint --device 0
+# Example: Training DMatch with CIFAR-10 dataset on GPU0
+python train.py --gpu-id 0 --dataset cifar10 --batch-size 64 --out results --seed 5
 ```
 ```
-# Example: training SkeletonGCL with 2s-AGCN on NTU RGB+D 120 cross-subject with joint modality on GPU 0
-python main.py --config config/nturgbd120-cross-subject/agcn.yaml --work-dir work_dir/ntu120/csub/agcn_joint --device 0
-```
-
-- To train model on NTU RGB+D 60/120 with bone or motion modalities, setting `bone` or `vel` arguments in the config file `default.yaml` or in the command line.
-
-```
-# Example: training SkeletonGCL with CTRGCN on NTU RGB+D 120 cross subject under bone modality
-python main.py --config config/nturgbd120-cross-subject/ctr.yaml --train_feeder_args bone=True --test_feeder_args bone=True --work-dir work_dir/ntu120/csub/ctrgcn_bone --device 0
+# Example: Training DMatch with CIFAR-100 dataset on GPU0
+python train.py --gpu-id 0 --dataset cifar100 --batch-size 64 --out results --seed 5
 ```
 
-- To train your own model, put model file `your_model.py` under `./model` and run:
-
-```
-# Example: training your own model on NTU RGB+D 120 cross subject
-python main.py --config config/nturgbd120-cross-subject/xxx.yaml --model model.your_model.Model --work-dir work_dir/ntu120/csub/your_model --device 0
-```
 
 ### Testing
 
-- To test the trained models saved in <work_dir>, run the following command:
+- To test the trained model and evaluate its effectiveness, run the following command:
 
 ```
-python main.py --config <work_dir>/config.yaml --work-dir <work_dir> --phase test --save-score True --weights <work_dir>/xxx.pt --device 0
-```
-
-- To ensemble the results of different modalities, run 
-```
-# Example: ensemble four modalities of CTRGCN on NTU RGB+D 120 cross subject
-python ensemble.py --dataset ntu120/xsub \
---joint-dir work_dir/ntu120/xsub/ctrgcn_MGGCL_joint \
---bone-dir work_dir/ntu120/xsub/ctrgcn_MGGCL_bone \
---joint-motion-dir work_dir/ntu120/xsub/ctrgcn_MG_joint_motion \
---bone-motion-dir work_dir/ntu120/xsub/ctrgcn_MG_bone_motion
+python train.py --dataset cifar10 --batch-size 64 --seed 5
 ```
