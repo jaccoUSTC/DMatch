@@ -371,10 +371,6 @@ def main():
         args.simMatrix = checkpoint['simMatrix']
         args.simMatrix_k_ = checkpoint['simMatrix_k_']
     
-    # if args.amp:
-    #     from apex import amp
-    #     model, optimizer = amp.initialize(
-    #         model, optimizer, opt_level=args.opt_level)
 
     if args.local_rank != -1:
         model = torch.nn.parallel.DistributedDataParallel(
@@ -389,168 +385,11 @@ def main():
         f"  Total train batch size = {args.batch_size*args.world_size}")
     logger.info(f"  Total optimization steps = {args.total_steps}")
 
-    model.zero_grad()
-    train(args, labeled_trainloader, unlabeled_trainloader, test_loader,
-          model, optimizer, ema_model, scheduler)
+    model.eval()
+    test(args, test_loader, model, epoch)
 
 
-def train(args, labeled_trainloader, unlabeled_trainloader, test_loader,
-          model, optimizer, ema_model, scheduler):
-    if args.amp:
-        from apex import amp
-    global best_acc
-    test_accs = []
-    end = time.time()
-
-    if args.world_size > 1:
-        labeled_epoch = 0
-        unlabeled_epoch = 0
-        labeled_trainloader.sampler.set_epoch(labeled_epoch)
-        unlabeled_trainloader.sampler.set_epoch(unlabeled_epoch)
-
-    labeled_iter = iter(labeled_trainloader)
-    unlabeled_iter = iter(unlabeled_trainloader)
-    scaler = GradScaler()
-    amp_cm = autocast if args.amp else contextlib.suppress
-    simMatrix = SimilarMatrix(args.num_classes, args.device, simMatrix=args.simMatrix)
-
-
-    model.train()
-    for epoch in range(args.start_epoch, args.epochs):
-        batch_time = AverageMeter()
-        data_time = AverageMeter()
-        losses = AverageMeter()
-        losses_x = AverageMeter()
-        losses_u = AverageMeter()
-        mask_probs = AverageMeter()
-
-        for batch_idx in range(args.eval_step):
-            try:
-                inputs_x, targets_x, id_l = labeled_iter.next()
-                # error occurs ↓
-                # inputs_x, targets_x = next(labeled_iter)
-            except:
-                if args.world_size > 1:
-                    labeled_epoch += 1
-                    labeled_trainloader.sampler.set_epoch(labeled_epoch)
-                labeled_iter = iter(labeled_trainloader)
-                inputs_x, targets_x, id_l = labeled_iter.next()
-                # error occurs ↓
-                # inputs_x, targets_x = next(labeled_iter)
-
-            try:
-                (inputs_u_w, inputs_u_s), labels_u, id_u = unlabeled_iter.next()
-                # error occurs ↓
-                # (inputs_u_w, inputs_u_s), _ = next(unlabeled_iter)
-            except:
-                if args.world_size > 1:
-                    unlabeled_epoch += 1
-                    unlabeled_trainloader.sampler.set_epoch(unlabeled_epoch)
-                unlabeled_iter = iter(unlabeled_trainloader)
-                (inputs_u_w, inputs_u_s), labels_u, id_u = unlabeled_iter.next()
-                # error occurs ↓
-                # (inputs_u_w, inputs_u_s), _ = next(unlabeled_iter)
-
-            data_time.update(time.time() - end)
-            batch_size = inputs_x.shape[0]
-            
-            
-            with amp_cm():
-                inputs = interleave(
-                torch.cat((inputs_x, inputs_u_w, inputs_u_s)), 2*args.mu+1).to(args.device)
-                targets_x = targets_x.to(args.device)
-                logits = model(inputs)
-                logits = de_interleave(logits, 2*args.mu+1)
-                logits_x = logits[:batch_size]
-                logits_u_w, logits_u_s = logits[batch_size:].chunk(2)
-                del logits
-                
-                # 1.有标签loss计算
-                Lx = F.cross_entropy(logits_x, targets_x, reduction='mean')
-
-                # 2.获取为标签，处理数据
-                pseudo_label = torch.softmax(logits_u_w.detach()/args.T, dim=-1)
-                max_probs, targets_u = torch.max(pseudo_label, dim=-1)
-                mask = max_probs.ge(args.threshold).float()
-
-                # 3.无标签loss计算
-                Lu_temp = F.cross_entropy(logits_u_s, targets_u,reduction='none') # [N]
-                Lu =  (Lu_temp* mask).mean()
-
-                # 4. k_null loss calculate
-                L_null = 0
-                if 5 <= epoch:
-                    L_null = k_null_loss(logits_u_s, pseudo_label,simMatrix.k, select_mask=mask.bool())
-
-                loss = Lx + args.lambda_u * Lu + L_null
-
-            if args.amp:
-                scaler.scale(loss).backward()
-                scaler.step(optimizer)
-                scaler.update()
-            else:
-                loss.backward()
-                optimizer.step()
-            scheduler.step()
-            # 更新数据库
-            simMatrix.updata(pseudo_label[~mask.bool()], targets_u[~mask.bool()])  # 更新
-            unlabeled_iter._dataset.updata_data(idx=id_u, current_loss=Lu_temp, current_cls=targets_u, current_sim=simMatrix.sm.argmin(-1), epoch=epoch)
-
-            losses.update(loss.item())
-            losses_x.update(Lx.item())
-            losses_u.update(Lu.item())
-            
-            if args.use_ema:
-                ema_model.update(model)
-            model.zero_grad()
-
-            batch_time.update(time.time() - end)
-            end = time.time()
-            mask_probs.update(mask.mean().item())
-            # print out
-            if batch_idx%50==0:
-                P_acc_ = 1 if mask.sum() == 0 else (targets_u[mask.to(bool)] == labels_u[mask.to(bool)].to(args.device)).float().mean().item()
-                # print(f'simMatrix.k{simMatrix.k_}')
-
-                print(f"Train Epoch: {epoch}/{args.epochs:4}. Iter: {batch_idx + 1:4}/{args.eval_step:4}. LR: {scheduler.get_last_lr()[0]:.4f}. Loss: {losses.avg:.4f}. Loss_sup: {losses_x.avg:.4f}. Loss_unsup: {losses_u.avg:.4f}. L_null:{L_null:.4f}. Mask: {mask_probs.avg:.4f}. P_acc:{P_acc_:.4f}. mean_k:{simMatrix.k_.mean():.4f}")
-
-        print(simMatrix.k_.to('cpu').numpy(), simMatrix.k.to('cpu').numpy())
-
-
-        if args.use_ema:
-            test_model = ema_model.ema
-        else:
-            test_model = model
-
-        if args.local_rank in [-1, 0]:
-            test_loss, test_acc = test(args, test_loader, test_model, epoch)
-
-            is_best = test_acc > best_acc
-            best_acc = max(test_acc, best_acc)
-
-            model_to_save = model.module if hasattr(model, "module") else model
-            if args.use_ema:
-                ema_to_save = ema_model.ema.module if hasattr(
-                    ema_model.ema, "module") else ema_model.ema
-            save_checkpoint({
-                'epoch': epoch + 1,
-                'state_dict': model_to_save.state_dict(),
-                'ema_state_dict': ema_to_save.state_dict() if args.use_ema else None,
-                'acc': test_acc,
-                'best_acc': best_acc,
-                'optimizer': optimizer.state_dict(),
-                'scheduler': scheduler.state_dict(),
-                'simMatrix': simMatrix.sm.to('cpu').numpy(),
-                'simMatrix_k_': simMatrix.k_.to('cpu').numpy(),
-            }, is_best, args.out)
-
-            test_accs.append(test_acc)
-            logger.info('Best top-1 acc: {:.2f}'.format(best_acc))
-            logger.info('Mean top-1 acc: {:.2f}\n'.format(
-                np.mean(test_accs[-20:])))
-
-
-def test(args, test_loader, model, epoch):
+def test(args, test_loader, model, epoch=0):
     batch_time = AverageMeter()
     data_time = AverageMeter()
     losses = AverageMeter()
